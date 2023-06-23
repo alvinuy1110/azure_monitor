@@ -1,0 +1,196 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spring-app-config
+data:
+  application.properties: |
+      server.servlet.context-path=/
+      ############
+      # Actuator
+      management.endpoints.web.base-path=/mgmt
+      
+      #management.endpoints.web.exposure.include=info,health
+      management.endpoints.web.exposure.include=*
+      #management.endpoints.web.exposure.exclude
+      
+      # prometheus enabling
+      management.endpoint.prometheus.enabled=true
+      management.metrics.export.prometheus.enabled=true
+      
+      ## health
+      #management.endpoint.health.show-details=never # When to show full health details.
+      management.endpoint.health.show-details=always
+      management.endpoints.shutdown.enabled=false
+      spring.cloud.discovery.client.composite-indicator.enabled=false
+      
+      management.info.env.enabled=true
+
+---
+# Source: generic-web-service/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: spring-boot-app
+  labels:
+    app: spring-boot-app
+    app.kubernetes.io/name: spring-boot-app
+    app.kubernetes.io/instance: spring-boot-app
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: 'generic-web-service-1.0.0'
+    version: "1.0.0"
+    app.kubernetes.io/version: "1.0.0"
+
+  annotations:
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: SpringBootApp
+      release: spring-boot-app
+
+  strategy:
+    type: RollingUpdate
+
+  template:
+    metadata:
+      labels:
+        app: SpringBootApp
+        release: spring-boot-app
+        app.kubernetes.io/name: spring-boot-app
+        app.kubernetes.io/instance: spring-boot-app
+        app.kubernetes.io/managed-by: Helm
+        helm.sh/chart: 'generic-web-service-1.0.0'
+        version: "1.0.0"
+        app.kubernetes.io/version: "1.0.0"
+        allow-from: public
+      annotations:
+        kubectl.kubernetes.io/default-container: references-ws
+        prometheus.io/scrape: "true",
+        prometheus.io/path: "/mgmt/prometheus",
+        prometheus.io/port: "8080",
+        prometheus.io/scheme: "http"
+
+    spec:
+      securityContext:
+        {}
+
+      terminationGracePeriodSeconds: 15
+
+      volumes:
+        - name: config-volume
+          configMap:
+            name: spring-app-config
+            items:
+              - key: application.properties
+                path: application.properties
+      containers:
+        - name: spring-boot-app
+          image: 'alvinuy1110g/spring-boot:v1'
+          imagePullPolicy: Always
+
+          securityContext:
+            {}
+
+          volumeMounts:
+            - name: config-volume
+              mountPath: /config
+
+          ports:
+            - name: 'http-ingress'
+              containerPort: 8080
+          startupProbe:
+            failureThreshold: 6
+            httpGet:
+              path: /mgmt/health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            failureThreshold: 6
+            httpGet:
+              path: /mgmt/health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            failureThreshold: 6
+            httpGet:
+              path: /mgmt/health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+
+          resources:
+            limits:
+              cpu: 1000m
+              memory: 1280Mi
+            requests:
+              cpu: 500m
+              memory: 768Mi
+
+
+          env:
+            - name: RELEASE_NAME
+              value: release-name
+            - name: POD_CONTROLLER
+              value: Deployment
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: REPLICAS
+              value: "1"
+            - name: PORT
+              value: "8080"
+            - name: "JAVA_TOOL_OPTIONS"
+              value: "-Dspring.config.location=/config"
+          # Delay shutdown to give ingress controller time to reroute traffic
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]
+
+---
+# Source: generic-web-service/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: SpringBootApp
+  labels:
+    app: SpringBootApp
+    release: spring-boot-app
+    app.kubernetes.io/name: spring-boot-app
+    app.kubernetes.io/instance: spring-boot-app
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: 'generic-web-service-1.0.0'
+    version: "1.0.0"
+    app.kubernetes.io/version: "1.0.0"
+
+
+
+spec:
+  selector:
+    app: SpringBootApp
+    release: spring-boot-app
+  #    role: stable
+
+  ports:
+    - name: 'http-ingress'
+      port: 80
+      targetPort: 8080
